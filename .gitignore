@@ -1,0 +1,8 @@
+settings.json
+databridge.log
+.venv
+build
+dist
+.idea
+.vscode
+__pycache__

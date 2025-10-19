@@ -1,0 +1,6 @@
+[project]
+name = "databridge"
+version = "0.1.0"
+description = "A simple bridge between csv and databases"
+requires-python = ">=3.13"
+dependencies = []
