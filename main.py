@@ -28,12 +28,27 @@ class FilterDialog(QDialog):
     def __init__(self, initial: Optional[Dict[str, Any]] = None, parent=None):
         super().__init__(parent)
         self.setWindowTitle("Фильтры колонки")
-        self.rules = initial.copy() if initial else {}
+        # Инициализируем rules с новыми полями по умолчанию
+        self.rules = initial.copy() if initial else {
+            "trim": True,
+            "to_string": False,
+            "to_integer": False,
+            "digits_only": False,
+            "normalize_phone": False,
+            "lower": False,
+            "upper": False,
+            "format_date": False,
+            "remove_chars": [],
+            "regex_remove": [],
+            "regex_replace": []
+        }
         lay = QFormLayout(self)
         self.ed_remove_chars = QLineEdit(",".join(self.rules.get("remove_chars", [])))
         self.ed_regex_remove = QTextEdit("\n".join(self.rules.get("regex_remove", [])))
         self.ed_regex_replace = QTextEdit(json.dumps(self.rules.get("regex_replace", []), ensure_ascii=False, indent=2))
         self.chk_trim = self._check("trim", True)
+        self.chk_to_string = self._check("to_string", False)
+        self.chk_to_int = self._check("to_integer", False)
         self.chk_digits = self._check("digits_only", False)
         self.chk_normalize_phone = self._check("normalize_phone", False)
         self.chk_lower = self._check("lower", False)
@@ -44,6 +59,8 @@ class FilterDialog(QDialog):
         lay.addRow("Regex удалить (по одному на строку):", self.ed_regex_remove)
         lay.addRow("Regex replace (JSON):", self.ed_regex_replace)
         lay.addRow("Trim", self.chk_trim)
+        lay.addRow("К строке (str)", self.chk_to_string)
+        lay.addRow("К числу (int) (Digits only auto)", self.chk_to_int)
         lay.addRow("Digits only", self.chk_digits)
         lay.addRow("Нормализация телефона (RU)", self.chk_normalize_phone)
         lay.addRow("lower()", self.chk_lower)
@@ -51,11 +68,11 @@ class FilterDialog(QDialog):
         lay.addRow("Дата YYYY-MM-DD", self.chk_date)
 
         buttons = QHBoxLayout()
-        ok = QPushButton("OK");
+        ok = QPushButton("OK")
         cancel = QPushButton("Отмена")
-        ok.clicked.connect(self.accept);
+        ok.clicked.connect(self.accept)
         cancel.clicked.connect(self.reject)
-        buttons.addWidget(ok);
+        buttons.addWidget(ok)
         buttons.addWidget(cancel)
         lay.addRow(buttons)
 
@@ -71,6 +88,8 @@ class FilterDialog(QDialog):
     def get_rules(self) -> Dict[str, Any]:
         rules = {
             "trim": self.chk_trim.isChecked(),
+            "to_string": self.chk_to_string.isChecked(),
+            "to_integer": self.chk_to_int.isChecked(),
             "digits_only": self.chk_digits.isChecked(),
             "normalize_phone": self.chk_normalize_phone.isChecked(),
             "lower": self.chk_lower.isChecked(),
@@ -448,13 +467,16 @@ class ImportTab(QWidget):
             first_batch = next(it, [])
             cols, data = transformer.transform_batch(first_batch)
             for r in data[:50]:
-                rows.append(dict(zip(cols, r)))
+                # Преобразуем все значения в строку перед созданием словаря
+                str_row = {col: str(val) for col, val in zip(cols, r)}
+                rows.append(str_row)
             preview_text = json.dumps(rows, ensure_ascii=False, indent=2)[:4000]
             logger.debug(f"Предпросмотр: {len(rows)} строк")
             QMessageBox.information(self, "Предпросмотр", preview_text)
         except Exception as e:
             logger.error(f"Ошибка предпросмотра: {e}", exc_info=True)
             QMessageBox.critical(self, "Ошибка", str(e))
+
 
     def generate_sql(self):
         logger.info("Генерация SQL")
