@@ -1,5 +1,5 @@
 import csv, re, time, threading, logging
-from typing import Dict, Any, Iterable, List, Callable, Optional, Tuple
+from typing import Dict, Any, Iterable, List, Callable, Optional, Tuple, LiteralString
 from clickhouse_driver import Client
 
 # Настройка логирования
@@ -50,8 +50,8 @@ def safe_parse_date(s: str) -> str:
     return s
 
 
-def normalize_phone(phone: str) -> str:
-    """Нормализует телефонный номер к формату 7XXXXXXXXXX"""
+def normalize_phone(phone: str) -> int:
+    """Нормализует телефонный номер к формату 7XXXXXXXXXX и возвращает int"""
     phone = phone.strip()
     # Удалить все нецифровые символы
     digits = re.sub(r'\D', '', phone)
@@ -66,14 +66,14 @@ def normalize_phone(phone: str) -> str:
     elif len(digits) == 10:  # Номер без кода страны
         digits = '7' + digits
 
-    # Если получилось 11 цифр с первой "7" — возвращаем, иначе возвращаем исходное
+    # Если получилось 11 цифр с первой "7" — возвращаем как int, иначе 0
     if len(digits) == 11 and digits.startswith('7'):
-        return digits
+        return int(digits)
     else:
         logger.warning(f"Не удалось нормализовать телефон: '{phone}' → '{digits}'")
-        return '0'  # Возвращаем 0 для невалидных номеров
+        return 0  # Возвращаем 0 как int для невалидных номеров
 
-def apply_filters_py(value: Any, rules: Dict[str, Any]) -> str:
+def apply_filters_py(value: Any, rules: Dict[str, Any]) -> int | str | bytes | LiteralString:
     original = "" if value is None else str(value)
     s = original
 
@@ -101,9 +101,23 @@ def apply_filters_py(value: Any, rules: Dict[str, Any]) -> str:
         s = s.upper()
     if rules.get("format_date"):
         s = safe_parse_date(s)
-
+    if rules.get("to_string"):
+        if isinstance(s, (int, float)):
+            s = str(s)
+        elif isinstance(s, datetime.datetime):
+            s = s.strftime(rules.get("format", "%Y-%m-%d %H:%M:%S"))
+    if rules.get("to_integer"):
+        try:
+            if isinstance(s, int):
+                pass
+            else:
+                digits = re.sub(r"\D", "", str(s))
+                s = int(digits) if digits else 0
+        except ValueError:
+            logger.warning(f"Ошибка конвертации в int для '{original}', установлено в 0")
+            s = 0
     if original != s:
-        logger.debug(f"Фильтры: '{original[:50]}' → '{s[:50]}'")
+        logger.debug(f"Фильтры: '{str(original)[:50]}' → '{str(s)[:50]}'")
 
     return s
 
@@ -184,15 +198,22 @@ class Transformer:
                 if not isinstance(csv_cols, list):
                     csv_cols = [csv_cols]
 
-                parts = []
-                for csv_col in csv_cols:
-                    raw = row.get(csv_col, "")
-                    rules = self.filters_by_csv.get(csv_col, {})
-                    filtered = apply_filters_py(raw, rules)
-                    if filtered:
-                        parts.append(filtered)
+                if len(csv_cols) == 1:
+                    # Одна колонка — сохраняем как есть (может быть int, str и т.д.)
+                    raw = row.get(csv_cols[0], "")
+                    rules = self.filters_by_csv.get(csv_cols[0], {})
+                    obj[ch_col] = apply_filters_py(raw, rules)
+                else:
+                    # Несколько колонок — объединяем как строки
+                    parts = []
+                    for csv_col in csv_cols:
+                        raw = row.get(csv_col, "")
+                        rules = self.filters_by_csv.get(csv_col, {})
+                        filtered = apply_filters_py(raw, rules)
+                        if filtered is not None and filtered != "":
+                            parts.append(str(filtered))
+                    obj[ch_col] = " ".join(parts)
 
-                obj[ch_col] = " ".join(parts)
 
             for ch_col, val in self.static_values.items():
                 obj[ch_col] = val
@@ -325,6 +346,14 @@ def make_staging_sql(
                 expr = f"replaceRegexpAll({expr}, '{escaped_pat}', '{escaped_repl}')"
         if rules.get("digits_only"):
             expr = f"replaceRegexpAll({expr}, '[^0-9]', '')"
+
+        if rules.get("to_int"):
+
+            digits_expr = f"replaceRegexpAll({expr}, '[^0-9]', '')"
+            expr = f"CASE WHEN length({digits_expr}) > 0 THEN toInt32OrZero({digits_expr}) ELSE 0 END"
+
+        if rules.get("to_string"):
+            expr = f"toString({expr})"
 
         # Нормализация телефона
         if rules.get("normalize_phone"):
