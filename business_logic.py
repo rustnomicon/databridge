@@ -94,7 +94,6 @@ def apply_filters_py(value: Any, rules: Dict[str, Any]) -> int | str | bytes | L
             except re.error as e:
                 logger.error(f"Ошибка regex: {e}, pattern={pair.get('pattern')}")
 
-    # ВАЖНО: digits_only теперь возвращает int, если указан to_integer
     if rules.get("digits_only"):
         s = re.sub(r"\D+", "", s)
         # Если также требуется to_integer, сразу конвертируем
@@ -115,9 +114,8 @@ def apply_filters_py(value: Any, rules: Dict[str, Any]) -> int | str | bytes | L
                 logger.warning(f"Ошибка конвертации в int для '{original}': {e}, установлено в 0")
                 s = 0
 
-            # КРИТИЧЕСКИ ВАЖНО: финальная проверка типа
             if not isinstance(s, int):
-                logger.error(f"ОШИБКА: PhoneNumber не int, а {type(s).__name__}: '{s}'")
+                logger.error(f"ОШИБКА: не int, а {type(s).__name__}: '{s}'")
                 s = 0
 
     # normalize_phone уже возвращает int
@@ -330,16 +328,6 @@ class ClickHouseUploader:
     def _insert_chunk(self, cols: List[str], data_rows: List[List[Any]]) -> int:
         thread_id = threading.get_ident()
         logger.debug(f"[Thread-{thread_id}] Вставка чанка: {len(data_rows)} строк, колонки={cols}")
-
-        phone_idx = cols.index('PhoneNumber') if 'PhoneNumber' in cols else -1
-
-        # ДИАГНОСТИКА: проверка типов перед вставкой
-        if phone_idx != -1:
-            for i, row in enumerate(data_rows):
-                phone_val = row[phone_idx]
-                if not isinstance(phone_val, int):
-                    logger.error(f"Строка {i}: PhoneNumber имеет тип {type(phone_val).__name__}: '{phone_val}'")
-                    row[phone_idx] = 0  # Принудительная замена
 
         try:
             client = Client(
