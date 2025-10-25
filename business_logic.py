@@ -93,45 +93,64 @@ def apply_filters_py(value: Any, rules: Dict[str, Any]) -> int | str | bytes | L
                 s = re.sub(pair.get("pattern", ""), pair.get("repl", ""), s)
             except re.error as e:
                 logger.error(f"Ошибка regex: {e}, pattern={pair.get('pattern')}")
+
+    # ВАЖНО: digits_only теперь возвращает int, если указан to_integer
     if rules.get("digits_only"):
         s = re.sub(r"\D+", "", s)
+        # Если также требуется to_integer, сразу конвертируем
+        if rules.get("to_integer"):
+            if s:
+                s = int(s)
+            else:
+                logger.warning(f"Нет цифр в значении '{original}', установлено в 0")
+                s = 0
+
+    # normalize_phone уже возвращает int
     if rules.get("normalize_phone"):
-        s = normalize_phone(s)
+        s = normalize_phone(str(s))  # Гарантируем, что передается строка
+        # normalize_phone всегда возвращает int, дополнительная проверка не нужна
+
     if rules.get("lower"):
-        s = s.lower()
+        s = s.lower() if isinstance(s, str) else s
     if rules.get("upper"):
-        s = s.upper()
+        s = s.upper() if isinstance(s, str) else s
     if rules.get("format_date"):
-        s = safe_parse_date(s)
+        s = safe_parse_date(str(s))
+
     if rules.get("to_string"):
         if isinstance(s, (int, float)):
             s = str(s)
         elif isinstance(s, datetime.datetime):
             s = s.strftime(rules.get("format", "%Y-%m-%d %H:%M:%S"))
-    if rules.get("to_integer"):
+        else:
+            s = str(s)
+
+    # to_integer обрабатываем, только если еще не int (и не обработан digits_only)
+    if rules.get("to_integer") and not isinstance(s, int):
         try:
-            if isinstance(s, int):
-                pass
+            # Преобразуем в строку если это не строка
+            str_value = str(s) if s is not None else ""
+
+            # Убираем ВСЕ символы кроме цифр
+            digits = re.sub(r"\D", "", str_value)
+
+            # Проверяем что остались цифры после очистки
+            if digits:
+                s = int(digits)
             else:
-                # Преобразуем в строку если это не строка
-                str_value = str(s) if s is not None else ""
-
-                # Убираем ВСЕ символы кроме цифр (включая пробелы, минусы, точки и т.д.)
-                digits = re.sub(r"\D", "", str_value)
-
-                # Проверяем что остались цифры после очистки
-                if digits:
-                    s = int(digits)
-                else:
-                    logger.warning(f"Нет цифр в значении '{original}', установлено в 0")
-                    s = 0
-
+                logger.warning(f"Нет цифр в значении '{original}', установлено в 0")
+                s = 0
         except (ValueError, AttributeError) as e:
             logger.warning(f"Ошибка конвертации в int для '{original}': {e}, установлено в 0")
             s = 0
 
+    # ФИНАЛЬНАЯ ПРОВЕРКА: если normalize_phone или to_integer, гарантируем int
+    if (rules.get("normalize_phone") or rules.get("to_integer")) and not isinstance(s, int):
+        logger.error(f"КРИТИЧЕСКАЯ ОШИБКА: ожидался int, получен {type(s).__name__}: '{s}' (исходное: '{original}')")
+        s = 0
+
     if original != s:
-        logger.debug(f"Фильтры: '{str(original)[:50]}' → '{str(s)[:50]}'")
+        logger.debug(f"Фильтры: '{str(original)[:50]}' → '{str(s)[:50]}' (тип: {type(s).__name__})")
 
     return s
 
